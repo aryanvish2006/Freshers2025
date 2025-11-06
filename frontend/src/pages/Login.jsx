@@ -1,10 +1,8 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const navigate = useNavigate();
 
   const login = async () => {
     setError("");
@@ -25,10 +23,10 @@ export default function Login() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("role", data.role);
 
-      // Navigate based on role (client-side)
-      if (data.role === "main_admin") navigate("/dashboard");
-      else if (data.role === "sub_admin") navigate("/funds");
-      else if (data.role === "scanner") navigate("/scanner");
+      // Redirect based on role
+      if (data.role === "main_admin") window.location = "/dashboard";
+      else if (data.role === "sub_admin") window.location = "/funds";
+      else if (data.role === "scanner") window.location = "/scanner";
     } catch (err) {
       setError("Invalid password. Please try again.");
     }
@@ -73,6 +71,7 @@ export default function Login() {
           🔐 Only role passwords work: Admin / Sub-admin / Scanner
         </p>
 
+        {/* 🔥 Developer watermark inside card bottom */}
         <div
           style={{
             marginTop: "20px",
