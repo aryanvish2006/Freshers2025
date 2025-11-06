@@ -45,7 +45,7 @@ const verifyLimiter = rateLimit({
   max: 10,
   message: "Too many requests, please slow down",
 });
-app.use("/api/verify", verifyLimiter);
+app.use("/verify", verifyLimiter);
 
 // ------------------ JWT Helpers ------------------
 function generateToken(user) {
@@ -73,7 +73,7 @@ function requireMainAdmin(req, res, next) {
 }
 
 // ------------------ AUTH ------------------
-app.post("/api/login", (req, res) => {
+app.post("/login", (req, res) => {
   const { password } = req.body;
 
   if (password === process.env.MAIN_ADMIN_PASS) {
@@ -95,7 +95,7 @@ app.post("/api/login", (req, res) => {
 });
 
 // ------------------ GENERATE TOKENS ------------------
-app.post("/api/generate", verifyJWT, requireMainAdmin, async (req, res) => {
+app.post("/generate", verifyJWT, requireMainAdmin, async (req, res) => {
   try {
     const { total = 1, type = "digital" } = req.body; // type can be "digital" or "printed"
 
@@ -127,7 +127,7 @@ app.post("/api/generate", verifyJWT, requireMainAdmin, async (req, res) => {
 
 
 // ADMIN SCAN + VALIDATE + ASSIGN (ONE STEP)
-app.post("/api/admin/scan-assign/:token", verifyJWT, async (req, res) => {
+app.post("/admin/scan-assign/:token", verifyJWT, async (req, res) => {
   try {
     const tokenStr = req.params.token;
     const { name, roll, price } = req.body;
@@ -169,13 +169,13 @@ app.post("/api/admin/scan-assign/:token", verifyJWT, async (req, res) => {
 
 
 // ------------------ GET ALL TOKENS (Main Admin Only) ------------------
-app.get("/api/tokens", verifyJWT, requireMainAdmin, async (req, res) => {
+app.get("/tokens", verifyJWT, requireMainAdmin, async (req, res) => {
   const tokens = await Token.find();
   res.json(tokens);
 });
 
 // ------------------ ASSIGN DIGITAL TOKEN ------------------
-app.post("/api/assign", verifyJWT, requireMainAdmin, async (req, res) => {
+app.post("/assign", verifyJWT, requireMainAdmin, async (req, res) => {
   const { name, roll, price } = req.body;
   if (!name || !roll) return res.status(400).send("Missing name/roll");
 
@@ -200,14 +200,14 @@ app.post("/api/assign", verifyJWT, requireMainAdmin, async (req, res) => {
 });
 
 // ------------------ UPDATE TOKEN PRICE ------------------
-app.put("/api/token/:id", verifyJWT, requireMainAdmin, async (req, res) => {
+app.put("/token/:id", verifyJWT, requireMainAdmin, async (req, res) => {
   const { price } = req.body;
   await Token.findByIdAndUpdate(req.params.id, { price });
   res.send("Price updated");
 });
 
 // ------------------ VERIFY TOKEN (Gate Scan) ------------------
-app.get("/api/verify/:token", async (req, res) => {
+app.get("/verify/:token", async (req, res) => {
   try {
     const tokenStr = req.params.token;
     const tokenDoc = await Token.findOne({ token: tokenStr });
@@ -229,7 +229,7 @@ app.get("/api/verify/:token", async (req, res) => {
 // ------------------ FUNDS ROUTES ------------------
 
 // View funds (all roles can view)
-app.get("/api/funds", verifyJWT, async (req, res) => {
+app.get("/funds", verifyJWT, async (req, res) => {
   try {
     const transactions = await Fund.find().sort({ createdAt: -1 });
     const totalCollected = (await Token.find()).reduce(
@@ -252,7 +252,7 @@ app.get("/api/funds", verifyJWT, async (req, res) => {
 });
 
 // Add funds (Main Admin only)
-app.post("/api/funds/add", verifyJWT, requireMainAdmin, async (req, res) => {
+app.post("/funds/add", verifyJWT, requireMainAdmin, async (req, res) => {
   const { amount, reason, source } = req.body;
   if (!amount || !reason) return res.status(400).send("Missing fields");
   await Fund.create({
@@ -266,7 +266,7 @@ app.post("/api/funds/add", verifyJWT, requireMainAdmin, async (req, res) => {
 
 // Withdraw funds (Main Admin only)
 app.post(
-  "/api/funds/withdraw",
+  "/funds/withdraw",
   verifyJWT,
   requireMainAdmin,
   async (req, res) => {
@@ -283,10 +283,6 @@ app.post(
 );
 
 // ------------------ RESET ENTRY (Main Admin only) ------------------
-app.post("/api/reset", verifyJWT, requireMainAdmin, async (req, res) => {
-  await Token.updateMany({}, { entered: false });
-  res.send("All entries reset");
-});
 
 // ------------------ DEFAULT ------------------
 app.get("/", (req, res) => res.send("🎉 Fresher Party QR Backend Running"));

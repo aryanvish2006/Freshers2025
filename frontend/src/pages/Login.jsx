@@ -11,7 +11,7 @@ export default function Login() {
     try {
       const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
-      const res = await fetch(`${API_BASE}/api/login`, {
+      const res = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
