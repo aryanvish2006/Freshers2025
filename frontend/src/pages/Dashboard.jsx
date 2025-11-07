@@ -15,24 +15,32 @@ export default function Dashboard() {
   const [modalVisible, setModalVisible] = useState(false);
   const [responseMsg, setResponseMsg] = useState("");
 
-  // 🔥 NEW — states for token generation
-  const [genType, setGenType] = useState("digital");
+  // Token generation
   const [genTotal, setGenTotal] = useState(0);
   const [genLoading, setGenLoading] = useState(false);
   const [genResponse, setGenResponse] = useState("");
 
   const token = localStorage.getItem("token");
   if (!token) window.location = "/";
-  const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+  const headers = {
+    Authorization: "Bearer " + token,
+    "Content-Type": "application/json",
+  };
 
   // ---------- Fetch tokens ----------
   const fetchTokens = async () => {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, { headers });
-    if (res.ok) {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, {
+        headers,
+      });
+      if (!res.ok) throw new Error("Failed to fetch tokens");
       const all = await res.json();
       setTokens(all);
       setAssigned(all.filter((t) => t.assigned));
       setEntered(all.filter((t) => t.entered));
+    } catch (err) {
+      console.error(err);
+      alert("Error fetching tokens: " + err.message);
     }
   };
 
@@ -40,14 +48,15 @@ export default function Dashboard() {
     fetchTokens();
   }, []);
 
-  // ---------- Assign Digital Token ----------
-  const assignDigital = async () => {
+  // ---------- Assign Token ----------
+  const assignToken = async () => {
     if (!name || !roll) return alert("Enter name and roll!");
     if (loading) return;
     setLoading(true);
 
     const exists = assigned.find(
-      (t) => t.name?.toLowerCase() === name.toLowerCase() || t.roll === roll
+      (t) =>
+        t.name?.toLowerCase() === name.toLowerCase() || t.roll === roll
     );
     if (exists) {
       alert("This student already has a token!");
@@ -66,7 +75,7 @@ export default function Dashboard() {
       setQrImage(data.qrImage);
       fetchTokens();
     } else {
-      alert("No digital tokens left or error occurred");
+      alert("Error assigning token");
     }
     setLoading(false);
   };
@@ -76,16 +85,47 @@ export default function Dashboard() {
     window.location = "/";
   };
 
-  // ---------- Scanner for Printed Tokens ----------
+  // ---------- Scanner ----------
   useEffect(() => {
     const scanner = new Html5QrcodeScanner("scanner", { fps: 10, qrbox: 250 });
     scanner.render(onScanSuccess, () => {});
-    function onScanSuccess(decodedText) {
+
+    async function onScanSuccess(decodedText) {
       scanner.clear();
       const tokenStr = decodedText.split("/").pop();
-      setScannedToken(tokenStr);
-      setModalVisible(true); // open modal input
+      setScanStatus("🔍 Checking token validity...");
+
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_API_BASE}/verify/${tokenStr}`
+        );
+        const text = await res.text();
+
+        if (text.includes("Invalid")) {
+          setScanStatus("❌ Invalid token");
+          setResponseMsg("❌ Invalid token scanned");
+          return;
+        }
+        if (text.includes("Already entered")) {
+          setScanStatus("⚠️ Already used");
+          setResponseMsg("⚠️ This token has already been used at entry");
+          return;
+        }
+        if (text.includes("Not paid") || text.includes("Unassigned")) {
+          // Only unassigned tokens trigger modal for assigning
+          setScannedToken(tokenStr);
+          setModalVisible(true);
+          setScanStatus("✅ Valid token — please assign");
+        } else {
+          setScanStatus(text);
+          setResponseMsg(text);
+        }
+      } catch (err) {
+        setScanStatus("❌ Scan error");
+        console.error(err);
+      }
     }
+
     return () => {
       try {
         scanner.clear();
@@ -93,6 +133,7 @@ export default function Dashboard() {
     };
   }, []);
 
+  // ---------- Assign Scanned Token ----------
   async function assignScannedToken(e) {
     e.preventDefault();
     setScanStatus("Assigning token...");
@@ -117,45 +158,36 @@ export default function Dashboard() {
     }
   }
 
-  // 🔥 NEW — Token Generation
-// 🔥 FIXED — Token Generation
-const generateTokens = async () => {
-  if (genLoading) return;
-  setGenLoading(true);
-  setGenResponse("");
+  // ---------- Generate Tokens ----------
+  const generateTokens = async () => {
+    if (genLoading) return;
+    setGenLoading(true);
+    setGenResponse("");
 
-  try {
-    // --- ensure we always call backend, not frontend dev server
-    const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_BASE}/generate`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ total: Number(genTotal) }),
+        }
+      );
 
-    const res = await fetch(`${API_BASE}/generate`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + token,
-      },
-      body: JSON.stringify({
-        total: Number(genTotal),
-        type: genType,
-      }),
-    });
-
-    const data = await res.text();
-
-    if (res.ok) {
-      setGenResponse(data);
-      fetchTokens();
-    } else {
-      setGenResponse("❌ " + data);
+      const data = await res.text();
+      if (res.ok) {
+        setGenResponse(data);
+        fetchTokens();
+      } else {
+        setGenResponse("❌ " + data);
+      }
+    } catch (err) {
+      console.error(err);
+      setGenResponse("❌ Network or server error");
     }
-  } catch (err) {
-    console.error(err);
-    setGenResponse("❌ Network or server error");
-  }
 
-  setGenLoading(false);
-};
-
+    setGenLoading(false);
+  };
 
   return (
     <div className="container py-4">
@@ -169,43 +201,42 @@ const generateTokens = async () => {
       {/* Tabs */}
       <ul className="nav nav-tabs" id="adminTabs" role="tablist">
         <li className="nav-item">
-          <button className="nav-link active" id="assign-tab" data-bs-toggle="tab" data-bs-target="#assign">
-            Assign Digital Token
+          <button className="nav-link active" data-bs-toggle="tab" data-bs-target="#assign">
+            Assign Token
           </button>
         </li>
         <li className="nav-item">
-          <button className="nav-link" id="assigned-tab" data-bs-toggle="tab" data-bs-target="#assigned">
+          <button className="nav-link" data-bs-toggle="tab" data-bs-target="#assigned">
             Assigned Tokens
           </button>
         </li>
         <li className="nav-item">
-          <button className="nav-link" id="entered-tab" data-bs-toggle="tab" data-bs-target="#entered">
+          <button className="nav-link" data-bs-toggle="tab" data-bs-target="#entered">
             Entered Students
           </button>
         </li>
         <li className="nav-item">
-          <button className="nav-link" id="scan-tab" data-bs-toggle="tab" data-bs-target="#scan">
-            Scan Printed Token
+          <button className="nav-link" data-bs-toggle="tab" data-bs-target="#scan">
+            Scan Token
           </button>
         </li>
-        {/* 🔥 NEW TAB */}
         <li className="nav-item">
-          <button className="nav-link" id="generate-tab" data-bs-toggle="tab" data-bs-target="#generate">
+          <button className="nav-link" data-bs-toggle="tab" data-bs-target="#generate">
             Generate Tokens
           </button>
         </li>
       </ul>
 
       <div className="tab-content mt-3">
-        {/* 1️⃣ Assign Digital Token */}
+        {/* Assign Token */}
         <div className="tab-pane fade show active" id="assign">
           <div className="card p-3 shadow-sm">
-            <h5>Assign New Digital Token</h5>
+            <h5>Assign New Token</h5>
             <div className="d-flex flex-column flex-md-row gap-2 mt-2">
               <input className="form-control" placeholder="Name" onChange={(e) => setName(e.target.value)} />
               <input className="form-control" placeholder="Roll" onChange={(e) => setRoll(e.target.value)} />
               <input className="form-control" placeholder="Price (₹)" value={price} onChange={(e) => setPrice(e.target.value)} />
-              <button className="btn btn-success" onClick={assignDigital} disabled={loading}>
+              <button className="btn btn-success" onClick={assignToken} disabled={loading}>
                 {loading ? "Assigning..." : "Assign"}
               </button>
             </div>
@@ -220,7 +251,7 @@ const generateTokens = async () => {
           </div>
         </div>
 
-        {/* 2️⃣ Assigned Tokens */}
+        {/* Assigned Tokens */}
         <div className="tab-pane fade" id="assigned">
           <h5 className="mt-3">All Assigned Tokens</h5>
           <div className="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mt-2">
@@ -231,7 +262,6 @@ const generateTokens = async () => {
                     <h6 className="card-title text-success fw-bold">{t.name}</h6>
                     <p className="card-text">
                       Roll: <strong>{t.roll}</strong><br />
-                      Type: {t.batch}<br />
                       Entered: {t.entered ? "✅" : "❌"}
                     </p>
                   </div>
@@ -241,7 +271,7 @@ const generateTokens = async () => {
           </div>
         </div>
 
-        {/* 3️⃣ Entered Students */}
+        {/* Entered Students */}
         <div className="tab-pane fade" id="entered">
           <h5 className="mt-3">Students Who Entered</h5>
           {entered.length === 0 ? (
@@ -258,17 +288,17 @@ const generateTokens = async () => {
           )}
         </div>
 
-        {/* 4️⃣ Scan Printed Token */}
+        {/* Scan Token */}
         <div className="tab-pane fade" id="scan">
           <div className="card p-3 shadow-sm text-center">
-            <h5>📷 Scan Printed Token</h5>
+            <h5>📷 Scan Token</h5>
             <div id="scanner" style={{ width: "100%", maxWidth: "320px", margin: "auto" }}></div>
             <div className="alert alert-light text-center mt-3">{scanStatus}</div>
             {responseMsg && <p className="mt-2">{responseMsg}</p>}
           </div>
         </div>
 
-        {/* 🔥 5️⃣ Generate Tokens */}
+        {/* Generate Tokens */}
         <div className="tab-pane fade" id="generate">
           <div className="card p-3 shadow-sm">
             <h5>Generate Tokens</h5>
@@ -280,19 +310,7 @@ const generateTokens = async () => {
                 value={genTotal}
                 onChange={(e) => setGenTotal(e.target.value)}
               />
-              <select
-                className="form-select"
-                value={genType}
-                onChange={(e) => setGenType(e.target.value)}
-              >
-                <option value="digital">Digital</option>
-                <option value="printed">Printed</option>
-              </select>
-              <button
-                className="btn btn-primary"
-                onClick={generateTokens}
-                disabled={genLoading}
-              >
+              <button className="btn btn-primary" onClick={generateTokens} disabled={genLoading}>
                 {genLoading ? "Generating..." : "Generate"}
               </button>
             </div>
@@ -301,7 +319,7 @@ const generateTokens = async () => {
         </div>
       </div>
 
-      {/* 🔘 Modal for assigning scanned token */}
+      {/* Modal for assigning scanned token */}
       {modalVisible && (
         <div className="modal fade show d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.6)" }}>
           <div className="modal-dialog">

@@ -64,6 +64,16 @@ export default function Navbar() {
                 <li className="nav-item">
                   <Link
                     className={`nav-link ${
+                      current === "/tokensinfo" ? "active" : ""
+                    }`}
+                    to="/tokensinfo"
+                  >
+                    Tokens Info
+                  </Link>
+                </li>
+                <li className="nav-item">
+                  <Link
+                    className={`nav-link ${
                       current === "/funds" ? "active" : ""
                     }`}
                     to="/funds"

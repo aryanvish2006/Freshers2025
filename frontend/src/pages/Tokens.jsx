@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
+import jsPDF from "jspdf";
+import QRCodeLib from "qrcode";
 
 export default function Tokens() {
   const [tokens, setTokens] = useState([]);
-  const [visibleCount, setVisibleCount] = useState(20);
-  const [activeTab, setActiveTab] = useState("assigned");
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState(null);
-  const [editedPrice, setEditedPrice] = useState(0);
 
   const jwt = localStorage.getItem("token");
   const role = localStorage.getItem("role");
+  const headers = { Authorization: "Bearer " + jwt };
 
-  // ✅ Role-based access protection
   if (!jwt) window.location = "/";
   if (role !== "main_admin") {
     if (role === "sub_admin") window.location = "/funds";
@@ -20,15 +18,11 @@ export default function Tokens() {
     else window.location = "/";
   }
 
-  const headers = { Authorization: "Bearer " + jwt };
-
-  // Fetch tokens
+  // Fetch all tokens
   const fetchTokens = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, {
-        headers,
-      });
+      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, { headers });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setTokens(data);
@@ -39,31 +33,119 @@ export default function Tokens() {
     }
   };
 
-  const updatePrice = async (id) => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/token/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ price: editedPrice }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setEditingId(null);
-      fetchTokens();
-    } catch (err) {
-      alert("Failed to update price: " + err.message);
-    }
-  };
-
   useEffect(() => {
     fetchTokens();
   }, []);
 
-  const unassigned = tokens.filter((t) => !t.assigned);
-  const assigned = tokens.filter((t) => t.assigned && !t.entered);
-  const entered = tokens.filter((t) => t.entered);
+  // 🔹 Generate PDF (side-by-side layout)
+  const generatePDF = async (tokensToPrint, pageNumber = null) => {
+    if (!tokensToPrint.length) return alert("No tokens to print.");
 
-  const totalPaid = tokens.reduce((sum, t) => sum + (t.price || 0), 0);
+    const doc = new jsPDF("p", "mm", "a4");
 
+    const perPage = 15; // 3x5 grid
+    const cols = 3;
+    const rows = 5;
+
+    // Box & QR geometry
+    const boxWidth = 68; // mm
+    const boxHeight = 55;
+    const marginX = 2; // left margin
+    const marginY = 2; // top margin
+    const qrSize = 38; // mm
+    const padding = 1; // inner padding1
+    for (let i = 0; i < tokensToPrint.length; i++) {
+      const token = tokensToPrint[i];
+      const posIndex = i % perPage;
+      const col = posIndex % cols;
+      const row = Math.floor(posIndex / cols);
+
+      const x = marginX + col * boxWidth;
+      const y = marginY + row * boxHeight;
+
+      // Draw outer box
+      doc.setDrawColor(120);
+      doc.setLineWidth(0.3);
+      doc.rect(x, y, boxWidth - 2, boxHeight - 2, "S");
+
+      // Generate QR
+      const qrData = `${import.meta.env.VITE_API_BASE.replace("/api", "")}/api/verify/${token.token}`;
+      const qrCanvas = document.createElement("canvas");
+      await QRCodeLib.toCanvas(qrCanvas, qrData, { width: 200 });
+      const qrImage = qrCanvas.toDataURL("image/png");
+
+      // Coordinates
+      const qrX = x + padding;
+      const qrY = y + padding;
+      const textStartX = qrX + qrSize + padding + 2; // right of QR
+
+      // --- Title beside QR ---
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("DGSPGC", textStartX, qrY + 7);
+      doc.text("Freshers", textStartX, qrY + 11);
+      doc.text("BCA 2025", textStartX, qrY + 15);
+      doc.setFontSize(23);
+      doc.text(`#${i + 1 + (pageNumber ? (pageNumber - 1) * perPage : 0)}`, textStartX, qrY + 25);
+      doc.setFontSize(7);
+      doc.text(`${token.token}`, textStartX, qrY+29);
+
+      // Add QR
+      doc.addImage(qrImage, "PNG", qrX, qrY, qrSize, qrSize);
+
+      // --- Token info centered below ---
+      const infoY = qrY + qrSize + 8;
+      const centerX = x + (boxWidth - 2) / 2;
+
+
+      doc.setFontSize(7.8);
+
+
+      // --- Disclaimer (safe inside box) ---
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+const disclaimer = "Valid once only. We’re not responsible for loss or misuse.";
+
+const maxY = y + boxHeight - 4;
+const disclaimerY = Math.min(infoY + 11, maxY - 4);
+
+doc.text("View Funds At : aryanv.netlify.app", centerX, disclaimerY - 6, { align: "center" });
+doc.text("Password : fresh2025", centerX, disclaimerY - 1, { align: "center" });
+
+doc.setFontSize(6.4);
+doc.text("----------------------------------------------------------------", centerX, disclaimerY + 2, { align: "center" });
+
+// ✅ print disclaimer as one single line (no split)
+doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
+
+
+      // reset color
+      doc.setTextColor(0, 0, 0);
+
+      // Add new page every 15 tokens
+      if ((i + 1) % perPage === 0 && i < tokensToPrint.length - 1) {
+        doc.addPage();
+      }
+    }
+
+    const filename = pageNumber
+      ? `DGSPGC_Freshers2025_Page${pageNumber}.pdf`
+      : "DGSPGC_Freshers2025_AllTokens.pdf";
+
+    doc.save(filename);
+  };
+
+  // Download all tokens
+  const printAllTokens = async () => generatePDF(tokens);
+
+  // Download individual page
+  const printPage = async (pageIndex) => {
+    const start = pageIndex * 15;
+    const end = start + 15;
+    await generatePDF(tokens.slice(start, end), pageIndex + 1);
+  };
+
+  // Loading screen
   if (loading) {
     return (
       <div className="container text-center mt-5">
@@ -73,215 +155,93 @@ export default function Tokens() {
     );
   }
 
-  // Get active list
-  const activeList =
-    activeTab === "assigned"
-      ? assigned
-      : activeTab === "unassigned"
-      ? unassigned
-      : entered;
+  // Split tokens into pages of 15
+  const pages = [];
+  for (let i = 0; i < tokens.length; i += 15) {
+    pages.push(tokens.slice(i, i + 15));
+  }
 
-  const visibleTokens = activeList.slice(0, visibleCount);
-
+  // UI Preview
   return (
     <div className="container py-4">
-      <h2 className="text-primary fw-bold mb-3">🎫 Tokens Overview</h2>
-
-      {/* Summary */}
-      <div className="row g-3 mb-4">
-        <div className="col-md-3 col-6">
-          <div className="card text-bg-primary text-center">
-            <div className="card-body">
-              <h6>Total Tokens</h6>
-              <h4>{tokens.length}</h4>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3 col-6">
-          <div className="card text-bg-warning text-center">
-            <div className="card-body">
-              <h6>Unassigned</h6>
-              <h4>{unassigned.length}</h4>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3 col-6">
-          <div className="card text-bg-success text-center">
-            <div className="card-body">
-              <h6>Assigned</h6>
-              <h4>{assigned.length}</h4>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3 col-6">
-          <div className="card text-bg-dark text-center">
-            <div className="card-body">
-              <h6>Entered</h6>
-              <h4>{entered.length}</h4>
-            </div>
-          </div>
-        </div>
+      <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+        <h2 className="text-primary fw-bold">🎫 DGSPGC Tokens Dashboard</h2>
+        <button className="btn btn-success shadow-sm" onClick={printAllTokens}>
+          🖨 Print All Tokens
+        </button>
       </div>
 
-      <div className="alert alert-info text-center">
-        <strong>Total ₹ Collected:</strong> ₹{totalPaid}
+      <div className="alert alert-info text-center mb-4 shadow-sm">
+        Total Tokens: <strong>{tokens.length}</strong> | Pages:{" "}
+        <strong>{Math.ceil(tokens.length / 15)}</strong>
       </div>
 
-      {/* Tabs */}
-      <ul className="nav nav-pills justify-content-center mb-3">
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "assigned" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("assigned");
-              setVisibleCount(20);
-            }}
-          >
-            Assigned
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "unassigned" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("unassigned");
-              setVisibleCount(20);
-            }}
-          >
-            Unassigned
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "entered" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("entered");
-              setVisibleCount(20);
-            }}
-          >
-            Entered
-          </button>
-        </li>
-      </ul>
-
-      {/* Token cards */}
-      <div className="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
-        {visibleTokens.map((t) => (
-          <div className="col" key={t._id}>
-            <div
-              className={`card h-100 shadow-sm border-${
-                t.entered
-                  ? "success"
-                  : t.assigned
-                  ? "primary"
-                  : "secondary"
-              }`}
+      {pages.map((page, pageIndex) => (
+        <div
+          key={pageIndex}
+          className="mb-5 border rounded shadow-sm p-3 bg-white"
+          style={{ borderTop: "4px solid #0d6efd" }}
+        >
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <h5 className="fw-bold text-secondary mb-0">
+              Page {pageIndex + 1}
+            </h5>
+            <button
+              className="btn btn-outline-primary btn-sm"
+              onClick={() => printPage(pageIndex)}
             >
-              <div className="card-body">
-                <h5 className="card-title fw-bold">{t.name || "Unassigned"}</h5>
-                <p className="mb-1">
-                  <strong>Roll:</strong> {t.roll || "-"}
-                </p>
-                <p className="mb-1">
-                  <strong>Batch:</strong> {t.batch}
-                </p>
+              💾 Download This Page
+            </button>
+          </div>
 
-                {/* Editable Price (main_admin only) */}
-                {editingId === t._id ? (
-                  <div className="d-flex align-items-center gap-2 mb-2">
-                    <input
-                      type="number"
-                      className="form-control form-control-sm w-50"
-                      value={editedPrice}
-                      onChange={(e) => setEditedPrice(e.target.value)}
-                    />
-                    <button
-                      className="btn btn-success btn-sm"
-                      onClick={() => updatePrice(t._id)}
-                    >
-                      Save
-                    </button>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setEditingId(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <p className="mb-2">
-                    <strong>Price:</strong> ₹{t.price || 0}{" "}
-                    <button
-                      className="btn btn-sm btn-outline-primary ms-2"
-                      onClick={() => {
-                        setEditingId(t._id);
-                        setEditedPrice(t.price || 0);
-                      }}
-                    >
-                      Edit
-                    </button>
-                  </p>
-                )}
-
-                <p className="small text-muted">
-                  Assigned:{" "}
-                  {t.assignedAt
-                    ? new Date(t.assignedAt).toLocaleString()
-                    : "-"}
-                  <br />
-                  Entered:{" "}
-                  {t.enteredAt ? new Date(t.enteredAt).toLocaleString() : "-"}
-                </p>
-
-                {/* QR for assigned tokens */}
-                {t.assigned && (
-                  <div className="text-center mt-3">
-                    <div className="bg-white d-inline-block p-2 border rounded">
+          <div className="row row-cols-1 row-cols-md-3 g-3">
+            {page.map((t, i) => (
+              <div className="col" key={t._id}>
+                <div
+                  className="card text-center border-primary h-100 shadow-sm"
+                  style={{
+                    borderWidth: "1px",
+                    borderRadius: "10px",
+                    background: "#f9fbff",
+                  }}
+                >
+                  <div className="card-body p-2 d-flex flex-column align-items-center">
+                    <div className="d-flex align-items-start justify-content-center gap-2 mb-1">
                       <QRCode
                         value={`${import.meta.env.VITE_API_BASE.replace(
                           "/api",
                           ""
                         )}/api/verify/${t.token}`}
-                        size={100}
+                        size={70}
                       />
+                      <div className="text-start ms-1">
+                        <h6 className="fw-bold text-primary mb-0">DGSPGC</h6>
+                        <p className="fw-semibold text-primary mb-0 small">
+                          FRESHERS 2025
+                        </p>
+                      </div>
                     </div>
+                    <p className="small text-dark fw-semibold mb-1">
+                      {t.token}
+                    </p>
+                    <p className="small text-muted mb-0">
+                      Token #{pageIndex * 15 + i + 1}
+                    </p>
+                    <p
+                      className="small text-danger mt-1"
+                      style={{ fontSize: "10px", lineHeight: "1.2" }}
+                    >
+                      ⚠️ This token is one-time usable only. Keep it safe. It
+                      will not work twice, and we are not responsible for
+                      misuse.
+                    </p>
                   </div>
-                )}
-
-                <div className="mt-3 text-center">
-                  <span
-                    className={`badge ${
-                      t.entered
-                        ? "bg-success"
-                        : t.assigned
-                        ? "bg-primary"
-                        : "bg-secondary"
-                    }`}
-                  >
-                    {t.entered
-                      ? "Entered"
-                      : t.assigned
-                      ? "Issued"
-                      : "Not Assigned"}
-                  </span>
                 </div>
               </div>
-            </div>
+            ))}
           </div>
-        ))}
-      </div>
-
-      {/* Show More Button */}
-      {visibleCount < activeList.length && (
-        <div className="text-center mt-4">
-          <button
-            className="btn btn-outline-primary"
-            onClick={() => setVisibleCount(visibleCount + 20)}
-          >
-            Show More
-          </button>
         </div>
-      )}
+      ))}
     </div>
   );
 }

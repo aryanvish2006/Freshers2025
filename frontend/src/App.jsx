@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import Scanner from "./pages/Scanner";
 import Navbar from "./components/Navbar";
 import Tokens from "./pages/Tokens";
+import Tokensinfo from "./pages/Tokeninfo";
 import Funds from "./pages/Funds";
 
 export default function App() {
@@ -40,6 +41,15 @@ export default function App() {
           element={
             <ProtectedRoute
               element={<Tokens />}
+              allowedRoles={["main_admin"]}
+            />
+          }
+        />
+        <Route
+          path="/tokensinfo"
+          element={
+            <ProtectedRoute
+              element={<Tokensinfo />}
               allowedRoles={["main_admin"]}
             />
           }

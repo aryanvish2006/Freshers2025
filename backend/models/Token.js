@@ -6,11 +6,9 @@ const tokenSchema = new mongoose.Schema({
   name: { type: String, default: null },
   roll: { type: String, default: null },
   entered: { type: Boolean, default: false },
-  batch: { type: String, enum: ["printed", "digital"], required: true },
   price: { type: Number, default: 0 },
   assignedAt: { type: Date },
-  enteredAt: { type: Date }
-
+  enteredAt: { type: Date },
 });
 
 export default mongoose.model("Token", tokenSchema);

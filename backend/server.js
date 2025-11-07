@@ -31,7 +31,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
-const SECRET = process.env.JWT_SECRET || "supersecret";
+const SECRET = process.env.JWT_SECRET;
 
 // ------------------ CONNECT TO MONGO ------------------
 mongoose
@@ -95,30 +95,30 @@ app.post("/login", (req, res) => {
 });
 
 // ------------------ GENERATE TOKENS ------------------
+// ------------------ GENERATE TOKENS ------------------
 app.post("/generate", verifyJWT, requireMainAdmin, async (req, res) => {
   try {
-    const { total = 1, type = "digital" } = req.body; // type can be "digital" or "printed"
+    const { total = 1 } = req.body;
 
     // validate input
     if (total <= 0 || total > 10000)
       return res.status(400).send("Invalid total value (must be 1–10000)");
 
-    if (!["digital", "printed"].includes(type))
-      return res.status(400).send("Invalid type (must be 'digital' or 'printed')");
-
-    const existing = await Token.countDocuments();
-    if (existing > 0)
-      return res.status(400).send("Tokens already exist. Delete old ones first.");
-
     const tokens = [];
 
     for (let i = 0; i < total; i++) {
-      const tokenStr = crypto.randomBytes(8).toString("hex");
-      tokens.push({ token: tokenStr, batch: type });
+      // ensure unique token
+      let tokenStr;
+      let exists = true;
+      while (exists) {
+        tokenStr = crypto.randomBytes(8).toString("hex");
+        exists = await Token.findOne({ token: tokenStr });
+      }
+      tokens.push({ token: tokenStr });
     }
 
     await Token.insertMany(tokens);
-    res.send(`✅ ${total} ${type} tokens generated successfully`);
+    res.send(`✅ ${total} tokens generated successfully`);
   } catch (err) {
     console.error(err);
     res.status(500).send("Error generating tokens");
@@ -126,11 +126,24 @@ app.post("/generate", verifyJWT, requireMainAdmin, async (req, res) => {
 });
 
 
+
 // ADMIN SCAN + VALIDATE + ASSIGN (ONE STEP)
+// ------------------ ADMIN SCAN + VALIDATE + ASSIGN (ONE STEP) ------------------
 app.post("/admin/scan-assign/:token", verifyJWT, async (req, res) => {
   try {
-    const tokenStr = req.params.token;
-    const { name, roll, price } = req.body;
+    // sanitize token param (remove accidental slashes/spaces)
+    const rawToken = String(req.params.token || "").trim();
+    const tokenStr = rawToken.split("/").pop().replace(/[^a-z0-9]/gi, "");
+
+    // take request body safely
+    const name = req.body?.name?.toString().trim() || "";
+    const roll = req.body?.roll?.toString().trim() || "";
+    const price = Number(req.body?.price) || 0;
+
+    // basic validation: we require name and roll for assignment
+    if (!name || !roll) {
+      return res.status(400).json({ status: "error", message: "Missing name or roll" });
+    }
 
     const tokenDoc = await Token.findOne({ token: tokenStr });
     if (!tokenDoc) return res.status(404).json({ status: "invalid", message: "❌ Invalid token" });
@@ -162,10 +175,11 @@ app.post("/admin/scan-assign/:token", verifyJWT, async (req, res) => {
       message: `✅ Token assigned successfully to ${name} (${roll}) for ₹${price || 400}`,
     });
   } catch (err) {
-    console.error(err);
+    console.error("ERROR /admin/scan-assign/:token:", err);
     res.status(500).json({ status: "error", message: "Server error" });
   }
 });
+
 
 
 // ------------------ GET ALL TOKENS (Main Admin Only) ------------------
@@ -175,29 +189,37 @@ app.get("/tokens", verifyJWT, requireMainAdmin, async (req, res) => {
 });
 
 // ------------------ ASSIGN DIGITAL TOKEN ------------------
+// ------------------ ASSIGN TOKEN ------------------
 app.post("/assign", verifyJWT, requireMainAdmin, async (req, res) => {
-  const { name, roll, price } = req.body;
-  if (!name || !roll) return res.status(400).send("Missing name/roll");
+  try {
+    const { name, roll, price } = req.body;
+    if (!name || !roll) return res.status(400).send("Missing name/roll");
 
-  const tokenDoc = await Token.findOneAndUpdate(
-    { assigned: false, batch: "digital" },
-    {
-      assigned: true,
-      name,
-      roll,
-      price: price || 0,
-      assignedAt: new Date(),
-    },
-    { new: true }
-  );
+    // Find any unassigned token (no batch filter anymore)
+    const tokenDoc = await Token.findOneAndUpdate(
+      { assigned: false },
+      {
+        assigned: true,
+        name,
+        roll,
+        price: price || 0,
+        assignedAt: new Date(),
+      },
+      { new: true }
+    );
 
-  if (!tokenDoc) return res.status(400).send("No unassigned digital tokens left");
+    if (!tokenDoc) return res.status(400).send("No unassigned tokens left");
 
-  const qrData = `${process.env.BASE_URL}/api/verify/${tokenDoc.token}`;
-  const qrImage = await QRCode.toDataURL(qrData);
+    const qrData = `${process.env.BASE_URL}/api/verify/${tokenDoc.token}`;
+    const qrImage = await QRCode.toDataURL(qrData);
 
-  res.json({ name, roll, token: tokenDoc.token, qrImage });
+    res.json({ name, roll, token: tokenDoc.token, qrImage });
+  } catch (err) {
+    console.error("ERROR /assign:", err);
+    res.status(500).send("Server error assigning token");
+  }
 });
+
 
 // ------------------ UPDATE TOKEN PRICE ------------------
 app.put("/token/:id", verifyJWT, requireMainAdmin, async (req, res) => {
@@ -287,4 +309,11 @@ app.post(
 // ------------------ DEFAULT ------------------
 app.get("/", (req, res) => res.send("🎉 Fresher Party QR Backend Running"));
 
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+const server = app.listen(PORT, () =>{
+ console.log(`Server running at ${PORT}`);
+setInterval(async () => {
+  try {
+    await fetch("https://aryanfreshers.onrender.com/");
+  } catch {}
+}, 10 * 60 * 1000); // every 10 minutes
+});
