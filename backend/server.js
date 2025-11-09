@@ -9,23 +9,26 @@ import bcrypt from "bcryptjs";
 import rateLimit from "express-rate-limit";
 import Token from "./models/Token.js";
 import Fund from "./models/Fund.js";
+import cookieParser from "cookie-parser";
+
 
 dotenv.config();
 const app = express();
 const allowedOrigins = [
   "http://localhost:3000",       
-  "https://aryanv.netlify.app", 
+  "https://aryanv.netlify.app"
 ];
+
+app.use(cookieParser());
+
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) callback(null, true);
-      else callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+    origin: allowedOrigins,
+    credentials: true, 
   })
 );
+
 
 app.use(express.json());
 
@@ -53,17 +56,25 @@ function generateToken(user) {
 }
 
 function verifyJWT(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).send("No token");
-  const token = authHeader.split(" ")[1];
+  const token = req.cookies.token;
+  if (!token) return res.status(401).send("No token");
+
   try {
     const decoded = jwt.verify(token, SECRET);
-    req.user = decoded.user; // includes role
+    req.user = decoded.user; // contains role
     next();
   } catch {
-    res.status(403).send("Invalid token");
+    res.status(403).send("Invalid or expired token");
   }
 }
+
+app.get("/auth/check", verifyJWT, (req, res) => {
+  res.json({ valid: true, user: req.user });
+});
+app.post("/logout", (req, res) => {
+  res.clearCookie("token");
+  res.json({ success: true });
+});
 
 // ------------------ ROLE GUARDS ------------------
 function requireMainAdmin(req, res, next) {
@@ -75,24 +86,27 @@ function requireMainAdmin(req, res, next) {
 // ------------------ AUTH ------------------
 app.post("/login", (req, res) => {
   const { password } = req.body;
+  let role = null;
 
-  if (password === process.env.MAIN_ADMIN_PASS) {
-    const token = generateToken({ role: "main_admin" });
-    return res.json({ token, role: "main_admin" });
-  }
+  if (password === process.env.MAIN_ADMIN_PASS) role = "main_admin";
+  else if (password === process.env.SUB_ADMIN_PASS) role = "sub_admin";
+  else if (password === process.env.SCANNER_PASS) role = "scanner";
+  else return res.status(401).json({ error: "Invalid password" });
 
-  if (password === process.env.SUB_ADMIN_PASS) {
-    const token = generateToken({ role: "sub_admin" });
-    return res.json({ token, role: "sub_admin" });
-  }
+  const token = generateToken({ role });
 
-  if (password === process.env.SCANNER_PASS) {
-    const token = generateToken({ role: "scanner" });
-    return res.json({ token, role: "scanner" });
-  }
+  // ✅ Store token safely as HTTP-only cookie
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production", // HTTPS in prod
+    sameSite: "Strict",
+    maxAge: 8 * 60 * 60 * 1000, // 8 hours
+  });
 
-  res.status(401).json({ error: "Invalid password" });
+  // Only return role info to frontend
+  res.json({ success: true, role });
 });
+
 
 // ------------------ GENERATE TOKENS ------------------
 // ------------------ GENERATE TOKENS ------------------
@@ -166,7 +180,7 @@ app.post("/admin/scan-assign/:token", verifyJWT, async (req, res) => {
     tokenDoc.assigned = true;
     tokenDoc.name = name;
     tokenDoc.roll = roll;
-    tokenDoc.price = price || 400;
+    tokenDoc.price = price || 0;
     tokenDoc.assignedAt = new Date();
     await tokenDoc.save();
 
@@ -228,6 +242,28 @@ app.put("/token/:id", verifyJWT, requireMainAdmin, async (req, res) => {
   res.send("Price updated");
 });
 
+// ------------------ CHECK TOKEN (for dashboard scan only) ------------------
+app.get("/check/:token", verifyJWT, async (req, res) => {
+  try {
+    const tokenStr = req.params.token.trim();
+    const tokenDoc = await Token.findOne({ token: tokenStr });
+    if (!tokenDoc) return res.json({ status: "invalid", message: "❌ Invalid token" });
+
+    if (!tokenDoc.assigned)
+      return res.json({ status: "unassigned", message: "✅ Valid token — not assigned yet" });
+
+    return res.json({
+      status: "assigned",
+      message: `✅ Already assigned to ${tokenDoc.name} (${tokenDoc.roll}) for ₹${tokenDoc.price || 0} --Entered[${tokenDoc.entered}] -- Qr[${tokenDoc.token}]`,
+      token: tokenDoc,
+    });
+  } catch (err) {
+    console.error("ERROR /check/:token:", err);
+    res.status(500).json({ status: "error", message: "Server error" });
+  }
+});
+
+
 // ------------------ VERIFY TOKEN (Gate Scan) ------------------
 app.get("/verify/:token", async (req, res) => {
   try {
@@ -236,7 +272,7 @@ app.get("/verify/:token", async (req, res) => {
     if (!tokenDoc) return res.send("❌ Invalid QR");
 
     if (!tokenDoc.assigned) return res.send("❌ Not paid / Unassigned");
-    if (tokenDoc.entered) return res.send("⚠️ Already entered");
+    if (tokenDoc.entered) return res.send(`⚠️ Already entered [${tokenDoc.name}(${tokenDoc.roll})]`);
 
     tokenDoc.entered = true;
     tokenDoc.enteredAt = new Date();

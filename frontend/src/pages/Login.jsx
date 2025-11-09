@@ -12,6 +12,7 @@ export default function Login() {
       const res = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include", 
         body: JSON.stringify({ password }),
       });
 
@@ -19,8 +20,7 @@ export default function Login() {
 
       const data = await res.json();
 
-      // Save auth info
-      localStorage.setItem("token", data.token);
+      // Save only role (no JWT stored)
       localStorage.setItem("role", data.role);
 
       // Redirect based on role
@@ -43,10 +43,7 @@ export default function Login() {
         alignItems: "center",
       }}
     >
-      <div
-        className="card shadow-sm p-4"
-        style={{ width: "100%", borderRadius: 12 }}
-      >
+      <div className="card shadow-sm p-4" style={{ width: "100%", borderRadius: 12 }}>
         <h3 className="fw-bold mb-4 text-primary">Fresher Portal Login</h3>
 
         <input
@@ -59,11 +56,7 @@ export default function Login() {
 
         {error && <div className="text-danger mb-2">{error}</div>}
 
-        <button
-          className="btn btn-primary w-100"
-          onClick={login}
-          disabled={!password}
-        >
+        <button className="btn btn-primary w-100" onClick={login} disabled={!password}>
           Login
         </button>
 
@@ -71,7 +64,6 @@ export default function Login() {
           🔐 Only role passwords work: Admin / Sub-admin / Scanner
         </p>
 
-        {/* 🔥 Developer watermark inside card bottom */}
         <div
           style={{
             marginTop: "20px",
@@ -82,7 +74,7 @@ export default function Login() {
             paddingTop: "10px",
           }}
         >
-          Developed by <strong className="text-primary">Aryan</strong>
+          Developed by <strong className="text-primary">Aryan</strong> <a style={{fontWeight:"bold",color:"purple"}} href="https://aryanvish.netlify.app">Contact</a>
         </div>
       </div>
     </div>

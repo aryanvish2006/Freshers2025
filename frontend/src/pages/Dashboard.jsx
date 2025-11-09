@@ -7,40 +7,46 @@ export default function Dashboard() {
   const [entered, setEntered] = useState([]);
   const [name, setName] = useState("");
   const [roll, setRoll] = useState("");
-  const [price, setPrice] = useState("400");
+  const [price, setPrice] = useState("0");
   const [qrImage, setQrImage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [scanStatus, setScanStatus] = useState("Waiting to scan...");
   const [scannedToken, setScannedToken] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [responseMsg, setResponseMsg] = useState("");
-
-  // Token generation
+  const [scannerInstance, setScannerInstance] = useState(null);
   const [genTotal, setGenTotal] = useState(0);
   const [genLoading, setGenLoading] = useState(false);
   const [genResponse, setGenResponse] = useState("");
 
-  const token = localStorage.getItem("token");
-  if (!token) window.location = "/";
-  const headers = {
-    Authorization: "Bearer " + token,
-    "Content-Type": "application/json",
-  };
+  const role = localStorage.getItem("role");
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+
+  // 🔐 Auth protection
+  if (!role) window.location = "/";
+  if (role !== "main_admin") {
+    if (role === "sub_admin") window.location = "/funds";
+    else if (role === "scanner") window.location = "/scanner";
+    else window.location = "/";
+  }
 
   // ---------- Fetch tokens ----------
   const fetchTokens = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, {
-        headers,
-      });
-      if (!res.ok) throw new Error("Failed to fetch tokens");
+      const res = await fetch(`${API_BASE}/tokens`, { credentials: "include" });
+
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
       const all = await res.json();
       setTokens(all);
       setAssigned(all.filter((t) => t.assigned));
       setEntered(all.filter((t) => t.entered));
     } catch (err) {
-      console.error(err);
-      alert("Error fetching tokens: " + err.message);
+      console.error("Error fetching tokens:", err);
+      alert("Error fetching tokens");
     }
   };
 
@@ -64,74 +70,107 @@ export default function Dashboard() {
       return;
     }
 
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/assign`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ name, roll, price }),
-    });
+    try {
+      const res = await fetch(`${API_BASE}/assign`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, roll, price }),
+      });
 
-    if (res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
       const data = await res.json();
-      setQrImage(data.qrImage);
-      fetchTokens();
-    } else {
-      alert("Error assigning token");
+      if (res.ok) {
+        setQrImage(data.qrImage);
+        fetchTokens();
+      } else {
+        alert(data.message || "Error assigning token");
+      }
+    } catch (err) {
+      console.error("Assign error:", err);
+      alert("Network or server error");
     }
+
     setLoading(false);
   };
 
-  const logout = () => {
-    localStorage.removeItem("token");
+  // ---------- Logout ----------
+  const logout = async () => {
+    try {
+      await fetch(`${API_BASE}/logout`, { credentials: "include" });
+    } catch {}
+    localStorage.removeItem("role");
     window.location = "/";
   };
 
   // ---------- Scanner ----------
-  useEffect(() => {
+  const startScanner = () => {
+    setScanStatus("Waiting to scan...");
+    if (scannerInstance) {
+      try {
+        scannerInstance.clear();
+      } catch {}
+    }
+
     const scanner = new Html5QrcodeScanner("scanner", { fps: 10, qrbox: 250 });
+    setScannerInstance(scanner);
+
     scanner.render(onScanSuccess, () => {});
 
     async function onScanSuccess(decodedText) {
       scanner.clear();
       const tokenStr = decodedText.split("/").pop();
-      setScanStatus("🔍 Checking token validity...");
+      setScanStatus("🔍 Checking token...");
 
       try {
-        const res = await fetch(
-          `${import.meta.env.VITE_API_BASE}/verify/${tokenStr}`
-        );
-        const text = await res.text();
+        const res = await fetch(`${API_BASE}/check/${tokenStr}`, {
+          credentials: "include",
+        });
 
-        if (text.includes("Invalid")) {
-          setScanStatus("❌ Invalid token");
-          setResponseMsg("❌ Invalid token scanned");
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem("role");
+          window.location = "/";
           return;
         }
-        if (text.includes("Already entered")) {
-          setScanStatus("⚠️ Already used");
-          setResponseMsg("⚠️ This token has already been used at entry");
-          return;
-        }
-        if (text.includes("Not paid") || text.includes("Unassigned")) {
-          // Only unassigned tokens trigger modal for assigning
+
+        const data = await res.json();
+
+        // ✅ Allow only unassigned tokens for assigning
+        if (data.status === "unassigned") {
           setScannedToken(tokenStr);
           setModalVisible(true);
-          setScanStatus("✅ Valid token — please assign");
+          setScanStatus("✅ Unassigned token found — ready to assign");
+        } else if (data.status === "assigned") {
+          setScanStatus("⚠️ Token already assigned to someone");
+        } else if (data.status === "entered") {
+          setScanStatus("🚫 This token is already used for entry");
         } else {
-          setScanStatus(text);
-          setResponseMsg(text);
+          setScanStatus("❌ Invalid or unknown token");
         }
       } catch (err) {
-        setScanStatus("❌ Scan error");
         console.error(err);
+        setScanStatus("❌ Error verifying token");
       }
     }
+  };
 
+  useEffect(() => {
+    startScanner();
     return () => {
-      try {
-        scanner.clear();
-      } catch {}
+      if (scannerInstance) {
+        try {
+          scannerInstance.clear();
+        } catch {}
+      }
     };
   }, []);
+
+  const restartScanner = () => startScanner();
 
   // ---------- Assign Scanned Token ----------
   async function assignScannedToken(e) {
@@ -139,22 +178,28 @@ export default function Dashboard() {
     setScanStatus("Assigning token...");
     try {
       const res = await fetch(
-        `${import.meta.env.VITE_API_BASE}/admin/scan-assign/${scannedToken}`,
+        `${API_BASE}/admin/scan-assign/${scannedToken}`,
         {
           method: "POST",
-          headers,
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, roll, price }),
         }
       );
+
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
       const data = await res.json();
-      setResponseMsg(data.message);
-      setScanStatus(data.message);
       setModalVisible(false);
+      setScanStatus(data.message || "✅ Token assigned successfully");
       fetchTokens();
     } catch (err) {
       console.error(err);
-      setResponseMsg("❌ Error assigning token");
-      setScanStatus("❌ Error assigning token");
+      setScanStatus("❌ Error assigning scanned token");
     }
   }
 
@@ -165,22 +210,22 @@ export default function Dashboard() {
     setGenResponse("");
 
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_BASE}/generate`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ total: Number(genTotal) }),
-        }
-      );
+      const res = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ total: Number(genTotal) }),
+      });
 
-      const data = await res.text();
-      if (res.ok) {
-        setGenResponse(data);
-        fetchTokens();
-      } else {
-        setGenResponse("❌ " + data);
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
       }
+
+      const text = await res.text();
+      setGenResponse(res.ok ? text : "❌ " + text);
+      if (res.ok) fetchTokens();
     } catch (err) {
       console.error(err);
       setGenResponse("❌ Network or server error");
@@ -245,7 +290,6 @@ export default function Dashboard() {
               <div className="text-center mt-4">
                 <h6>Show this QR to the student 👇</h6>
                 <img src={qrImage} alt="QR" className="img-fluid border rounded p-2" style={{ maxWidth: 250 }} />
-                <p className="text-muted">Ask them to click a photo of it.</p>
               </div>
             )}
           </div>
@@ -294,7 +338,12 @@ export default function Dashboard() {
             <h5>📷 Scan Token</h5>
             <div id="scanner" style={{ width: "100%", maxWidth: "320px", margin: "auto" }}></div>
             <div className="alert alert-light text-center mt-3">{scanStatus}</div>
-            {responseMsg && <p className="mt-2">{responseMsg}</p>}
+
+            {scanStatus !== "Waiting to scan..." && (
+              <button className="btn btn-outline-primary mt-3" onClick={restartScanner}>
+                🔄 Scan Again
+              </button>
+            )}
           </div>
         </div>
 

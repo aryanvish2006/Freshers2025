@@ -7,23 +7,32 @@ export default function Tokens() {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const jwt = localStorage.getItem("token");
   const role = localStorage.getItem("role");
-  const headers = { Authorization: "Bearer " + jwt };
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
-  if (!jwt) window.location = "/";
+  // 🔐 Frontend protection
+  if (!role) window.location = "/";
   if (role !== "main_admin") {
     if (role === "sub_admin") window.location = "/funds";
     else if (role === "scanner") window.location = "/scanner";
     else window.location = "/";
   }
 
-  // Fetch all tokens
+  // 🧾 Fetch all tokens
   const fetchTokens = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, { headers });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await fetch(`${API_BASE}/tokens`, {
+        credentials: "include", // ✅ send secure cookie
+      });
+
+      // Handle expired or invalid session
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
       const data = await res.json();
       setTokens(data);
     } catch (err) {
@@ -37,92 +46,78 @@ export default function Tokens() {
     fetchTokens();
   }, []);
 
-  // 🔹 Generate PDF (side-by-side layout)
+  // 🖨 Generate PDF in 3×5 layout
   const generatePDF = async (tokensToPrint, pageNumber = null) => {
     if (!tokensToPrint.length) return alert("No tokens to print.");
 
     const doc = new jsPDF("p", "mm", "a4");
-
-    const perPage = 15; // 3x5 grid
+    const perPage = 15;
     const cols = 3;
     const rows = 5;
 
-    // Box & QR geometry
-    const boxWidth = 68; // mm
+    const boxWidth = 68;
     const boxHeight = 55;
-    const marginX = 2; // left margin
-    const marginY = 2; // top margin
-    const qrSize = 38; // mm
-    const padding = 1; // inner padding1
+    const marginX = 2;
+    const marginY = 2;
+    const qrSize = 38;
+    const padding = 1;
+
     for (let i = 0; i < tokensToPrint.length; i++) {
       const token = tokensToPrint[i];
       const posIndex = i % perPage;
       const col = posIndex % cols;
       const row = Math.floor(posIndex / cols);
-
       const x = marginX + col * boxWidth;
       const y = marginY + row * boxHeight;
 
-      // Draw outer box
+      // Box outline
       doc.setDrawColor(120);
       doc.setLineWidth(0.3);
       doc.rect(x, y, boxWidth - 2, boxHeight - 2, "S");
 
-      // Generate QR
-      const qrData = `${import.meta.env.VITE_API_BASE.replace("/api", "")}/api/verify/${token.token}`;
+      // Generate QR (use qrcode lib)
+      const qrData = `${API_BASE.replace("/api", "")}/api/verify/${token.token}`;
       const qrCanvas = document.createElement("canvas");
       await QRCodeLib.toCanvas(qrCanvas, qrData, { width: 200 });
       const qrImage = qrCanvas.toDataURL("image/png");
 
-      // Coordinates
+      // Layout positions
       const qrX = x + padding;
       const qrY = y + padding;
-      const textStartX = qrX + qrSize + padding + 2; // right of QR
+      const textStartX = qrX + qrSize + padding ;
 
-      // --- Title beside QR ---
+      // Text: header and token #
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
+      doc.setFontSize(11);
       doc.text("DGSPGC", textStartX, qrY + 7);
-      doc.text("Freshers", textStartX, qrY + 11);
-      doc.text("BCA 2025", textStartX, qrY + 15);
+      doc.setFontSize(8);
+      doc.text("Department", textStartX, qrY + 12);
+      doc.text("BCA 2025", textStartX, qrY + 16);
       doc.setFontSize(23);
-      doc.text(`#${i + 1 + (pageNumber ? (pageNumber - 1) * perPage : 0)}`, textStartX, qrY + 25);
+      doc.text(`#${i + 1 + (pageNumber ? (pageNumber - 1) * perPage : 0)}`, textStartX, qrY + 26);
       doc.setFontSize(7);
-      doc.text(`${token.token}`, textStartX, qrY+29);
+      doc.text(`${token.token}`, textStartX, qrY + 30);
 
-      // Add QR
+      // Add QR image
       doc.addImage(qrImage, "PNG", qrX, qrY, qrSize, qrSize);
 
-      // --- Token info centered below ---
-      const infoY = qrY + qrSize + 8;
+      // Footer info
       const centerX = x + (boxWidth - 2) / 2;
+      const disclaimer = "Valid once only. We’re not responsible for loss or misuse :)";
+      const maxY = y + boxHeight - 4;
+      const disclaimerY = maxY - 8;
 
-
-      doc.setFontSize(7.8);
-
-
-      // --- Disclaimer (safe inside box) ---
-      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("BCA CULTURAL PROGRAM 15-11-2025", centerX, disclaimerY-3 , { align: "center" });
       doc.setFontSize(9);
-const disclaimer = "Valid once only. We’re not responsible for loss or misuse.";
+      doc.setFont("helvetica", "underline");
+      doc.text("Query ? Contact : aryanvish.netlify.app", centerX, disclaimerY+2 , { align: "center" });
+      doc.setFontSize(6.4);
+      doc.text("----------------------------------------------------------------------------", centerX, disclaimerY + 5, { align: "center" });
+      doc.text(disclaimer, centerX, disclaimerY + 8, { align: "center" });
 
-const maxY = y + boxHeight - 4;
-const disclaimerY = Math.min(infoY + 11, maxY - 4);
-
-doc.text("View Funds At : aryanv.netlify.app", centerX, disclaimerY - 6, { align: "center" });
-doc.text("Password : fresh2025", centerX, disclaimerY - 1, { align: "center" });
-
-doc.setFontSize(6.4);
-doc.text("----------------------------------------------------------------", centerX, disclaimerY + 2, { align: "center" });
-
-// ✅ print disclaimer as one single line (no split)
-doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
-
-
-      // reset color
-      doc.setTextColor(0, 0, 0);
-
-      // Add new page every 15 tokens
+      // New page after every 15 tokens
       if ((i + 1) % perPage === 0 && i < tokensToPrint.length - 1) {
         doc.addPage();
       }
@@ -131,37 +126,31 @@ doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
     const filename = pageNumber
       ? `DGSPGC_Freshers2025_Page${pageNumber}.pdf`
       : "DGSPGC_Freshers2025_AllTokens.pdf";
-
     doc.save(filename);
   };
 
-  // Download all tokens
+  // 🖨 Print handlers
   const printAllTokens = async () => generatePDF(tokens);
-
-  // Download individual page
   const printPage = async (pageIndex) => {
     const start = pageIndex * 15;
     const end = start + 15;
     await generatePDF(tokens.slice(start, end), pageIndex + 1);
   };
 
-  // Loading screen
-  if (loading) {
+  if (loading)
     return (
       <div className="container text-center mt-5">
         <div className="spinner-border text-primary" role="status"></div>
         <p className="mt-2">Loading tokens...</p>
       </div>
     );
-  }
 
-  // Split tokens into pages of 15
+  // Split into pages
   const pages = [];
   for (let i = 0; i < tokens.length; i += 15) {
     pages.push(tokens.slice(i, i + 15));
   }
 
-  // UI Preview
   return (
     <div className="container py-4">
       <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
@@ -183,9 +172,7 @@ doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
           style={{ borderTop: "4px solid #0d6efd" }}
         >
           <div className="d-flex justify-content-between align-items-center mb-2">
-            <h5 className="fw-bold text-secondary mb-0">
-              Page {pageIndex + 1}
-            </h5>
+            <h5 className="fw-bold text-secondary mb-0">Page {pageIndex + 1}</h5>
             <button
               className="btn btn-outline-primary btn-sm"
               onClick={() => printPage(pageIndex)}
@@ -208,10 +195,7 @@ doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
                   <div className="card-body p-2 d-flex flex-column align-items-center">
                     <div className="d-flex align-items-start justify-content-center gap-2 mb-1">
                       <QRCode
-                        value={`${import.meta.env.VITE_API_BASE.replace(
-                          "/api",
-                          ""
-                        )}/api/verify/${t.token}`}
+                        value={`${API_BASE.replace("/api", "")}/api/verify/${t.token}`}
                         size={70}
                       />
                       <div className="text-start ms-1">
@@ -231,9 +215,7 @@ doc.text(disclaimer, centerX, disclaimerY + 4, { align: "center" });
                       className="small text-danger mt-1"
                       style={{ fontSize: "10px", lineHeight: "1.2" }}
                     >
-                      ⚠️ This token is one-time usable only. Keep it safe. It
-                      will not work twice, and we are not responsible for
-                      misuse.
+                      ⚠️ One-time use only. Not responsible for misuse.
                     </p>
                   </div>
                 </div>

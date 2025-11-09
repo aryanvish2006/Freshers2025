@@ -5,18 +5,18 @@ export default function Scanner() {
   const [result, setResult] = useState("");
   const [status, setStatus] = useState("Waiting for scan...");
   const [scanning, setScanning] = useState(true);
+  const [logs, setLogs] = useState([]); // ✅ Track recent scans
 
-  const token = localStorage.getItem("token");
   const role = localStorage.getItem("role");
 
   // 🔐 Role-based protection
-  if (!token) window.location = "/";
+  if (!role) window.location = "/";
   if (!["main_admin", "scanner"].includes(role)) {
     if (role === "sub_admin") window.location = "/funds";
     else window.location = "/";
   }
 
-  // Setup scanner
+  // 🔧 Setup scanner
   useEffect(() => {
     if (!scanning) return;
 
@@ -27,14 +27,14 @@ export default function Scanner() {
 
     scanner.render(onScanSuccess, onScanError);
 
-    function onScanSuccess(decodedText) {
+    async function onScanSuccess(decodedText) {
       scanner.clear();
       setScanning(false);
-      handleVerification(decodedText);
+      await handleVerification(decodedText);
     }
 
     function onScanError() {
-      // ignore small errors
+      // ignore small scan errors
     }
 
     return () => {
@@ -44,29 +44,53 @@ export default function Scanner() {
     };
   }, [scanning]);
 
-  // Verify token against backend
+  // ✅ Verify Token
   async function handleVerification(decodedText) {
     setStatus("Verifying...");
     setResult("");
 
     try {
-      const token = decodedText.split("/").pop();
+      const tokenStr = decodedText.split("/").pop();
       const res = await fetch(
-        `${import.meta.env.VITE_API_BASE}/verify/${token}`
+        `${import.meta.env.VITE_API_BASE}/verify/${tokenStr}`,
+        { method: "GET", credentials: "include" }
       );
+
       const text = await res.text();
       setResult(text);
+
+      const logEntry = {
+        text,
+        token: tokenStr,
+        time: new Date().toLocaleTimeString(),
+      };
+      setLogs((prev) => [logEntry, ...prev.slice(0, 4)]);
 
       if (text.includes("✅")) setStatus("success");
       else if (text.includes("⚠️")) setStatus("warning");
       else setStatus("error");
     } catch (err) {
+      console.error(err);
       setStatus("error");
       setResult("❌ Error verifying QR");
     }
   }
 
-  // Bootstrap alert color
+  // 🎨 Dynamic background based on scan result
+  const getBackground = () => {
+    switch (status) {
+      case "success":
+        return "#50fd78ff"; // green
+      case "warning":
+        return "#fa5b5bff"; // yellow
+      case "error":
+        return "#f4f480ff"; // red
+      default:
+        return "#f8f9fa"; // neutral
+    }
+  };
+
+  // Bootstrap alert style
   const getAlertClass = () => {
     switch (status) {
       case "success":
@@ -81,45 +105,90 @@ export default function Scanner() {
   };
 
   return (
-    <div className="container text-center mt-5">
-      <h2 className="fw-bold text-primary mb-4">🎯 Gate Scanner</h2>
+    <div
+      className="min-vh-100 d-flex flex-column justify-content-center align-items-center"
+      style={{
+        background: getBackground(),
+        transition: "background 0.6s ease",
+        padding: "20px",
+      }}
+    >
+      <div className="text-center mb-4">
+        <h2 className="fw-bold text-primary mb-2">🎯 Gate Scanner</h2>
+        <p className="text-muted small mb-0">
+          Align the QR code inside the box. Scanning happens automatically.
+        </p>
+      </div>
 
       <div
-        className="card shadow-sm mx-auto"
-        style={{ maxWidth: "400px", minHeight: "480px" }}
+        className="card shadow-lg"
+        style={{
+          width: "100%",
+          maxWidth: "420px",
+          borderRadius: "15px",
+          overflow: "hidden",
+        }}
       >
-        <div className="card-body">
+        <div className="card-body text-center p-3">
           {scanning ? (
-            <div id="reader" style={{ width: "100%" }}></div>
+            <div id="reader" style={{ width: "100%", minHeight: "320px" }}></div>
           ) : (
             <>
-              <div className={`${getAlertClass()} mt-4`} role="alert">
+              <div className={`${getAlertClass()} mt-3`} role="alert">
                 {result || status}
               </div>
 
               <button
-                className="btn btn-outline-primary mt-3"
+                className="btn btn-primary w-100 mt-3"
+                style={{ borderRadius: "10px" }}
                 onClick={() => {
                   setResult("");
                   setStatus("Waiting for scan...");
                   setScanning(true);
                 }}
               >
-                Scan Again
+                🔄 Start New Scan
               </button>
             </>
           )}
         </div>
       </div>
 
-      <p className="text-muted mt-3 small">
-        Align the QR code inside the frame to verify entry.
-      </p>
+      {/* Recent Scan Logs */}
+      {logs.length > 0 && (
+        <div
+          className="card shadow-sm mt-4"
+          style={{ width: "100%", maxWidth: "420px" }}
+        >
+          <div className="card-body p-2">
+            <h6 className="fw-bold text-primary mb-2">📜 Recent Scans</h6>
+            <ul className="list-group list-group-flush small">
+              {logs.map((log, i) => (
+                <li
+                  key={i}
+                  className={`list-group-item d-flex justify-content-between ${
+                    log.text.includes("✅")
+                      ? "text-success"
+                      : log.text.includes("⚠️")
+                      ? "text-warning"
+                      : "text-danger"
+                  }`}
+                >
+                  <span>
+                    <strong>{`[${log.token}]`}</strong>...{" "}
+                    <small>{log.text}</small>
+                  </span>
+                  <span className="text-muted">{log.time}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
-      {/* Role Info */}
-      <div className="mt-2 text-secondary small">
+      <footer className="mt-4 text-secondary small text-center">
         Logged in as: <strong>{role?.replace("_", " ")}</strong>
-      </div>
+      </footer>
     </div>
   );
 }

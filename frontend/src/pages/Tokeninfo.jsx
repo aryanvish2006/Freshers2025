@@ -11,30 +11,64 @@ export default function Tokens() {
   const [editedPrice, setEditedPrice] = useState(0);
   const [search, setSearch] = useState("");
 
-  const jwt = localStorage.getItem("token");
   const role = localStorage.getItem("role");
-  const headers = { Authorization: "Bearer " + jwt, "Content-Type": "application/json" };
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
-  // Protect access
-  if (!jwt) window.location = "/";
+  // 🔐 Role-based protection
+  if (!role) window.location = "/";
   if (role !== "main_admin") {
     if (role === "sub_admin") window.location = "/funds";
     else if (role === "scanner") window.location = "/scanner";
     else window.location = "/";
   }
 
-  // Fetch all tokens
+  // 🔄 Fetch tokens
   const fetchTokens = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/tokens`, { headers });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await fetch(`${API_BASE}/tokens`, {
+        credentials: "include", // ✅ send secure cookie
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
       const data = await res.json();
       setTokens(data);
     } catch (err) {
-      alert("Failed to load tokens: " + err.message);
+      console.error("Error fetching tokens:", err);
+      alert("Failed to load tokens.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 💰 Update token price
+  const updatePrice = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/token/${id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ price: editedPrice }),
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        alert("Session expired. Please log in again.");
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
+      if (!res.ok) throw new Error(await res.text());
+      setEditingId(null);
+      fetchTokens();
+    } catch (err) {
+      console.error("Error updating price:", err);
+      alert("Failed to update price: " + err.message);
     }
   };
 
@@ -42,43 +76,27 @@ export default function Tokens() {
     fetchTokens();
   }, []);
 
-  const updatePrice = async (id) => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/token/${id}`, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ price: editedPrice }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setEditingId(null);
-      fetchTokens();
-    } catch (err) {
-      alert("Failed to update price: " + err.message);
-    }
-  };
-
-  // Derived lists
+  // 🔎 Derived data
   const unassigned = tokens.filter((t) => !t.assigned);
   const assigned = tokens.filter((t) => t.assigned && !t.entered);
   const entered = tokens.filter((t) => t.entered);
   const totalPaid = tokens.reduce((sum, t) => sum + (t.price || 0), 0);
 
-  if (loading) {
+  if (loading)
     return (
       <div className="container text-center mt-5">
-        <div className="spinner-border text-primary" role="status"></div>
-        <p className="mt-2">Loading tokens...</p>
+        <div className="spinner-border text-primary"></div>
+        <p>Loading tokens...</p>
       </div>
     );
-  }
 
-  // Tab filtering
+  // 🔄 Filter by tab
   let activeList = tokens;
   if (activeTab === "unassigned") activeList = unassigned;
   else if (activeTab === "assigned") activeList = assigned;
   else if (activeTab === "entered") activeList = entered;
 
-  // Search filter
+  // 🔍 Search filter
   const filteredTokens = activeList.filter(
     (t) =>
       t.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -88,7 +106,7 @@ export default function Tokens() {
 
   const visibleTokens = filteredTokens.slice(0, visibleCount);
 
-  // PRINT FEATURE (15 per page, all tokens)
+  // 🖨 Print tokens as PDF
   const printTokens = async () => {
     const tokensToPrint = tokens;
     if (!tokensToPrint.length) return alert("No tokens to print.");
@@ -110,17 +128,7 @@ export default function Tokens() {
       const x = marginX + col * gapX;
       const y = marginY + row * gapY;
 
-      const qrData = `${import.meta.env.VITE_API_BASE.replace("/api", "")}/api/verify/${token.token}`;
-      const qrCanvas = document.createElement("canvas");
-      const qr = new QRCode({ value: qrData });
-      // workaround for react-qr-code generation for PDF
-      const qrImg = document.createElement("img");
-      qrImg.src = document.querySelector(`canvas[data-token='${token.token}']`)?.toDataURL("image/png") || "";
-
-      // Fallback: generate basic text-based placeholder if missing
-      if (!qrImg.src) {
-        doc.text(`${token.token}`, x, y + 4);
-      }
+      const qrData = `${API_BASE.replace("/api", "")}/api/verify/${token.token}`;
 
       doc.setFontSize(8);
       doc.text(`${token.name || "Unassigned"}`, x, y + qrSize + 6);
@@ -206,6 +214,7 @@ export default function Tokens() {
                 <p className="mb-1">
                   <strong>Roll:</strong> {t.roll || "-"}
                 </p>
+
                 <p className="mb-2">
                   <strong>Price:</strong> ₹{t.price || 0}{" "}
                   {editingId === t._id ? (
@@ -251,7 +260,7 @@ export default function Tokens() {
                 <div className="text-center mt-3">
                   <div className="bg-white d-inline-block p-2 border rounded">
                     <QRCode
-                      value={`${import.meta.env.VITE_API_BASE.replace("/api", "")}/api/verify/${t.token}`}
+                      value={`${API_BASE.replace("/api", "")}/api/verify/${t.token}`}
                       size={100}
                     />
                   </div>

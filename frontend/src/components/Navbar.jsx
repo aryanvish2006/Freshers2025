@@ -7,11 +7,13 @@ export default function Navbar() {
 
   const role = localStorage.getItem("role");
 
-  const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
-    window.location = "/";
-  };
+  const logout = async () => {
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+  await fetch(`${API_BASE}/logout`, { method: "POST", credentials: "include" });
+  localStorage.removeItem("role");
+  window.location = "/";
+};
+
 
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">

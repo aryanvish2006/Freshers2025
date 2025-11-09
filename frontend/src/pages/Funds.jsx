@@ -9,49 +9,70 @@ export default function Funds() {
   const [type, setType] = useState("add");
   const [loading, setLoading] = useState(true);
 
-  const token = localStorage.getItem("token");
   const role = localStorage.getItem("role");
 
-  if (!token) window.location = "/";
+  // 🔐 Redirect unauthenticated users
+  if (!role) window.location = "/";
 
-  const headers = {
-    Authorization: "Bearer " + token,
-    "Content-Type": "application/json",
-  };
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
-  // Fetch all funds + totals
+  // 🔄 Fetch all funds + totals
   const fetchFunds = async () => {
     setLoading(true);
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/funds`, {
-      headers,
-    });
-    const data = await res.json();
-    setFunds(data.transactions || []);
-    setTotalFunds(data.totalFunds || 0);
-    setTotalCollected(data.totalCollected || 0);
-    setLoading(false);
+    try {
+      const res = await fetch(`${API_BASE}/funds`, {
+        credentials: "include", // ✅ Send cookie
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        // Session expired or invalid
+        localStorage.removeItem("role");
+        window.location = "/";
+        return;
+      }
+
+      const data = await res.json();
+      setFunds(data.transactions || []);
+      setTotalFunds(data.totalFunds || 0);
+      setTotalCollected(data.totalCollected || 0);
+    } catch (err) {
+      console.error("Error fetching funds:", err);
+      alert("Failed to load funds data.");
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // 💾 Add or withdraw funds
   const submitFund = async () => {
     if (!amount || !reason) return alert("Please fill all fields");
+
     const endpoint =
-      type === "add"
-        ? `${import.meta.env.VITE_API_BASE}/funds/add`
-        : `${import.meta.env.VITE_API_BASE}/funds/withdraw`;
+      type === "add" ? `${API_BASE}/funds/add` : `${API_BASE}/funds/withdraw`;
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ amount, reason }),
-    });
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include", // ✅ Send cookie
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, reason }),
+      });
 
-    if (res.ok) {
-      alert(type === "add" ? "Funds added" : "Funds withdrawn");
-      setAmount("");
-      setReason("");
-      fetchFunds();
-    } else {
-      alert("Failed");
+      if (res.ok) {
+        alert(type === "add" ? "Funds added" : "Funds withdrawn");
+        setAmount("");
+        setReason("");
+        fetchFunds();
+      } else if (res.status === 403 || res.status === 401) {
+        alert("Session expired. Please log in again.");
+        localStorage.removeItem("role");
+        window.location = "/";
+      } else {
+        alert("Failed to update funds.");
+      }
+    } catch (err) {
+      console.error("Error submitting fund transaction:", err);
+      alert("Network error while submitting transaction.");
     }
   };
 
