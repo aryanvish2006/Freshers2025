@@ -72,7 +72,11 @@ app.get("/auth/check", verifyJWT, (req, res) => {
   res.json({ valid: true, user: req.user });
 });
 app.post("/logout", (req, res) => {
-  res.clearCookie("token");
+  res.clearCookie("token", {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "None",
+});
   res.json({ success: true });
 });
 
@@ -97,11 +101,11 @@ app.post("/login", (req, res) => {
 
   // ✅ Store token safely as HTTP-only cookie
   res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // HTTPS in prod
-    sameSite: "Strict",
-    maxAge: 8 * 60 * 60 * 1000, // 8 hours
-  });
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "None", // ✅ allow cross-site cookies
+  maxAge: 8 * 60 * 60 * 1000,
+});
 
   // Only return role info to frontend
   res.json({ success: true, role });
