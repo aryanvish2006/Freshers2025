@@ -15,23 +15,25 @@ export default function App() {
 
   const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
-  // 🔍 Check if user cookie is still valid
+  // 🔍 Check if user cookie/session is valid
   const verifyAuth = async () => {
     try {
       const res = await fetch(`${API_BASE}/auth/check`, {
         method: "GET",
-        credentials: "include", // ✅ send HTTP-only cookie
+        credentials: "include", // send HTTP-only cookie
       });
 
-      if (!res.ok) throw new Error("Session invalid");
+      if (!res.ok) throw new Error("Invalid session");
       const data = await res.json();
 
       if (data.valid) {
         setIsAuthenticated(true);
+        setRole(data.role);
+        localStorage.setItem("role", data.role);
       } else {
         handleLogout();
       }
-    } catch {
+    } catch (err) {
       handleLogout();
     } finally {
       setAuthChecked(true);
@@ -48,9 +50,13 @@ export default function App() {
     verifyAuth();
   }, []);
 
-  // 🔒 Route guard
+  // 🧩 Prevent UI render until auth check completes
+  if (!authChecked) {
+    return <div className="text-center mt-5">Checking session...</div>;
+  }
+
+  // 🔒 Route guard component
   const ProtectedRoute = ({ element, allowedRoles }) => {
-    if (!authChecked) return <div className="text-center mt-5">Checking session...</div>;
     if (!isAuthenticated) return <Navigate to="/" replace />;
     if (!allowedRoles.includes(role)) return <Navigate to="/" replace />;
     return element;
@@ -61,30 +67,54 @@ export default function App() {
       {isAuthenticated && <Navbar />}
 
       <Routes>
-        {/* Public route */}
-        <Route path="/" element={<Login />} />
+        {/* 🟢 Public route (redirects if already logged in) */}
+        <Route
+          path="/"
+          element={
+            isAuthenticated ? (
+              role === "main_admin" ? (
+                <Navigate to="/dashboard" replace />
+              ) : role === "scanner" ? (
+                <Navigate to="/scanner" replace />
+              ) : (
+                <Navigate to="/funds" replace />
+              )
+            ) : (
+              <Login />
+            )
+          }
+        />
 
-        {/* Admin routes */}
+        {/* 🧭 Admin routes */}
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute element={<Dashboard />} allowedRoles={["main_admin"]} />
+            <ProtectedRoute
+              element={<Dashboard />}
+              allowedRoles={["main_admin"]}
+            />
           }
         />
         <Route
           path="/tokens"
           element={
-            <ProtectedRoute element={<Tokens />} allowedRoles={["main_admin"]} />
+            <ProtectedRoute
+              element={<Tokens />}
+              allowedRoles={["main_admin"]}
+            />
           }
         />
         <Route
           path="/tokensinfo"
           element={
-            <ProtectedRoute element={<Tokensinfo />} allowedRoles={["main_admin"]} />
+            <ProtectedRoute
+              element={<Tokensinfo />}
+              allowedRoles={["main_admin"]}
+            />
           }
         />
 
-        {/* Shared routes */}
+        {/* 🟠 Shared routes */}
         <Route
           path="/funds"
           element={
