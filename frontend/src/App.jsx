@@ -23,17 +23,15 @@ export default function App() {
         credentials: "include", // send HTTP-only cookie
       });
 
-      if (!res.ok) throw new Error("Invalid session");
-      const data = await res.json();
+      if (!res.ok) throw new Error("Session invalid");
 
+      const data = await res.json();
       if (data.valid) {
         setIsAuthenticated(true);
-        setRole(data.role);
-        localStorage.setItem("role", data.role);
       } else {
         handleLogout();
       }
-    } catch (err) {
+    } catch {
       handleLogout();
     } finally {
       setAuthChecked(true);
@@ -50,42 +48,28 @@ export default function App() {
     verifyAuth();
   }, []);
 
-  // 🧩 Prevent UI render until auth check completes
-  if (!authChecked) {
-    return <div className="text-center mt-5">Checking session...</div>;
-  }
-
-  // 🔒 Route guard component
+  // 🔒 Protected Route (only for logged-in users)
   const ProtectedRoute = ({ element, allowedRoles }) => {
+    if (!authChecked) return <div>Checking session...</div>;
     if (!isAuthenticated) return <Navigate to="/" replace />;
     if (!allowedRoles.includes(role)) return <Navigate to="/" replace />;
     return element;
   };
 
+  // 🌐 Public Route (redirects to dashboard if already logged in)
+  const PublicRoute = ({ element }) => {
+    if (!authChecked) return <div>Checking session...</div>;
+    return isAuthenticated ? <Navigate to="/dashboard" replace /> : element;
+  };
+
   return (
     <BrowserRouter>
       {isAuthenticated && <Navbar />}
-
       <Routes>
-        {/* 🟢 Public route (redirects if already logged in) */}
-        <Route
-          path="/"
-          element={
-            isAuthenticated ? (
-              role === "main_admin" ? (
-                <Navigate to="/dashboard" replace />
-              ) : role === "scanner" ? (
-                <Navigate to="/scanner" replace />
-              ) : (
-                <Navigate to="/funds" replace />
-              )
-            ) : (
-              <Login />
-            )
-          }
-        />
+        {/* Public route */}
+        <Route path="/" element={<PublicRoute element={<Login />} />} />
 
-        {/* 🧭 Admin routes */}
+        {/* Admin routes */}
         <Route
           path="/dashboard"
           element={
@@ -114,7 +98,7 @@ export default function App() {
           }
         />
 
-        {/* 🟠 Shared routes */}
+        {/* Shared routes */}
         <Route
           path="/funds"
           element={
@@ -133,6 +117,9 @@ export default function App() {
             />
           }
         />
+
+        {/* Catch all invalid routes */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
